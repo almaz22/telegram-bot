@@ -224,7 +224,7 @@ public class BuroBot extends TelegramLongPollingBot {
         ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboardForModules(DEPARTMENT, updated);
         sendMessage.setReplyMarkup(replyKeyboardMarkup);
         sendMessage.setChatId(chatId.toString());
-        sendMessage.setReplyToMessageId(messageId);
+        //sendMessage.setReplyToMessageId(messageId);
         sendMessage.setParseMode("HTML");
         sendMessage.setText(getModuleStatus(DEPARTMENT, moduleName));
 
@@ -243,8 +243,8 @@ public class BuroBot extends TelegramLongPollingBot {
         if (replyKeyboardMarkup.getKeyboard().size() > 1) {
             sendMessage.setReplyMarkup(replyKeyboardMarkup);
             sendMessage.setChatId(chatId.toString());
-            sendMessage.setReplyToMessageId(messageId);
-            sendMessage.setParseMode("HTML");
+            //sendMessage.setReplyToMessageId(messageId);
+            //sendMessage.setParseMode("HTML");
             sendMessage.setText("Список АС с неактуальной информацией");
             HSQLDBManager.getInstance().insertState(userId, chatId, NOTUPDATEDMODULE_STATE);
         }
@@ -252,7 +252,7 @@ public class BuroBot extends TelegramLongPollingBot {
             replyKeyboardMarkup = getRecentsKeyboardForModules(DEPARTMENT, true);
             sendMessage.setReplyMarkup(replyKeyboardMarkup);
             sendMessage.setChatId(chatId.toString());
-            sendMessage.setReplyToMessageId(messageId);
+            //sendMessage.setReplyToMessageId(messageId);
             sendMessage.setText("В отделе " + DEPARTMENT + " нет АС с неактуальной информацией. Супер!");
             HSQLDBManager.getInstance().insertState(userId, chatId, MODULE_STATE);
         }
@@ -265,7 +265,7 @@ public class BuroBot extends TelegramLongPollingBot {
 
         ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboardForDepartments(pir);
         sendMessage.setReplyMarkup(replyKeyboardMarkup);
-        sendMessage.setReplyToMessageId(message.getMessageId());
+        //sendMessage.setReplyToMessageId(message.getMessageId());
         sendMessage.setChatId(message.getChatId());
         sendMessage.setText("Выберите отдел");
 
@@ -279,7 +279,7 @@ public class BuroBot extends TelegramLongPollingBot {
 
         ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboardForModules(message.getText(), true);
         sendMessage.setReplyMarkup(replyKeyboardMarkup);
-        sendMessage.setReplyToMessageId(message.getMessageId());
+        //sendMessage.setReplyToMessageId(message.getMessageId());
         sendMessage.setChatId(message.getChatId());
         sendMessage.setText("Вы в отделе " + message.getText() + ". Выберите нужную АС");
 
@@ -318,7 +318,7 @@ public class BuroBot extends TelegramLongPollingBot {
         replyKeyboardMarkup.setResizeKeyboard(true);
         replyKeyboardMarkup.setOneTimeKeyboard(true);
 
-        getDepModules(departmentName, updated);
+        getDepModules(PIRNAME, departmentName, updated);
         Object[] objects = MODULES.toArray();
         List<KeyboardRow> keyboard = new ArrayList<>();
 
@@ -389,7 +389,7 @@ public class BuroBot extends TelegramLongPollingBot {
         }
     }
 
-    private static void getDepModules(String departmentName, boolean updated) {
+    private static void getDepModules(String pirName, String departmentName, boolean updated) {
         if (!MODULES.isEmpty())
             MODULES.clear();
         if (new File(PATH).exists()) {
@@ -397,22 +397,31 @@ public class BuroBot extends TelegramLongPollingBot {
             try {
                 documentBuilder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
                 Document document = documentBuilder.parse(PATH);
-                NodeList departments = document.getElementsByTagName("Department");
-                for (int i = 0; i < departments.getLength(); i++) {
-                    Node department = departments.item(i);
-                    if (department.getAttributes().getNamedItem("name").getNodeValue().equals(departmentName)) {
-                        NodeList modules = department.getChildNodes();
-                        for(int j = 0; j < modules.getLength(); j++) {
-                            Node module = modules.item(j);
+                NodeList pirList = document.getElementsByTagName("PIR");
+                for (int i = 0; i < pirList.getLength(); i++) {
+                    Node pir = pirList.item(i);
+                    if (pir.getAttributes().getNamedItem("name").getNodeValue().trim().equals(pirName)) {
+                        NodeList departments = pir.getChildNodes();
+                        for (int j = 0; j < departments.getLength(); j++) {
+                            Node department = departments.item(j);
                             try {
-                                String moduleName = module.getAttributes().getNamedItem("name").getNodeValue();
-                                err = false;
-                                if (updated)
-                                    MODULES.add(moduleName);
-                                else {
-                                    getModuleStatus(departmentName, moduleName);
-                                    if (err) {
-                                        MODULES.add(moduleName);
+                                if (department.getAttributes().getNamedItem("name").getNodeValue().trim().equals(departmentName)) {
+                                    NodeList modules = department.getChildNodes();
+                                    for (int k = 0; k < modules.getLength(); k++) {
+                                        Node module = modules.item(k);
+                                        try {
+                                            String moduleName = module.getAttributes().getNamedItem("name").getNodeValue();
+                                            err = false;
+                                            if (updated)
+                                                MODULES.add(moduleName);
+                                            else {
+                                                getModuleStatus(departmentName, moduleName);
+                                                if (err) {
+                                                    MODULES.add(moduleName);
+                                                }
+                                            }
+                                        } catch (Exception ignored) {
+                                        }
                                     }
                                 }
                             } catch (Exception ignored) {}
@@ -609,7 +618,7 @@ public class BuroBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.enableMarkdown(true);
         sendMessage.setChatId(chatId);
-        sendMessage.setReplyToMessageId(messageId);
+        //sendMessage.setReplyToMessageId(messageId);
         if (replyKeyboardMarkup != null) {
             sendMessage.setReplyMarkup(replyKeyboardMarkup);
         }
@@ -621,7 +630,7 @@ public class BuroBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.enableMarkdown(true);
         sendMessage.setChatId(chatId);
-        sendMessage.setReplyToMessageId(messageId);
+        //sendMessage.setReplyToMessageId(messageId);
         if (replyKeyboardMarkup != null) {
             sendMessage.setReplyMarkup(replyKeyboardMarkup);
         }
@@ -634,7 +643,7 @@ public class BuroBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.setChatId(chatId.toString());
         sendMessage.enableMarkdown(true);
-        sendMessage.setReplyToMessageId(messageId);
+        //sendMessage.setReplyToMessageId(messageId);
         sendMessage.setReplyMarkup(replyKeyboard);
         sendMessage.setText("Назад");
 
@@ -646,7 +655,7 @@ public class BuroBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.setChatId(chatId.toString());
         sendMessage.enableMarkdown(true);
-        sendMessage.setReplyToMessageId(messageId);
+        //sendMessage.setReplyToMessageId(messageId);
         sendMessage.setReplyMarkup(replyKeyboard);
         sendMessage.setText("Возврат в главное меню");
 
@@ -682,7 +691,7 @@ public class BuroBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.enableMarkdown(true);
         sendMessage.setChatId(chatId.toString());
-        sendMessage.setReplyToMessageId(messageId);
+        //sendMessage.setReplyToMessageId(messageId);
         sendMessage.setReplyMarkup(replyKeyboard);
         sendMessage.setText("Пожалуйста, выберите опцию из меню");
 
