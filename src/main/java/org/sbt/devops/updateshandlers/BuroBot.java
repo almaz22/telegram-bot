@@ -42,10 +42,15 @@ public class BuroBot extends TelegramLongPollingBot {
     private static final int STARTSTATE = 0;
     private static final int MAINMENU = 1;
     private static final int DEPARTMENT_STATE = 2;
-    private static final int NOTUPDATEDMODULE_STATE = 3;
+    private static final int MODULE_STATE = 3;
+    private static final int NOTUPDATEDMODULE_STATE = 4;
 
     private static String DEPARTMENT;
+    private static String PIRNAME;
+
     private static HashSet MODULES = new HashSet();
+    private static HashSet PIR = new HashSet();
+    private static HashSet DEPARTMENTS = new HashSet();
 
     private static boolean err = false;
 
@@ -91,12 +96,18 @@ public class BuroBot extends TelegramLongPollingBot {
                 sendMessageRequest = messageOnMainMenu(message);
                 break;
             case DEPARTMENT_STATE:
-            case NOTUPDATEDMODULE_STATE:
                 sendMessageRequest = messageOnDepartmentMenu(message);
+                break;
+            case MODULE_STATE:
+            case NOTUPDATEDMODULE_STATE:
+                sendMessageRequest = messageOnModuleMenu(message);
                 break;
             default:
                 sendMessageRequest = sendMessageDefault(message);
                 break;
+        }
+        if (sendMessageRequest == null) {
+            sendMessageRequest = sendMessageOnError(message);
         }
         sendMessage(sendMessageRequest);
     }
@@ -124,26 +135,14 @@ public class BuroBot extends TelegramLongPollingBot {
     }
 
     private static SendMessage messageOnMainMenu(Message message) {
-        SendMessage sendMessageRequest;
+        SendMessage sendMessageRequest = null;
+        if (PIR.isEmpty()) {
+            getPIR();
+        }
         if (message.hasText()) {
-            if (message.getText().equals(getONTABSCommand())) {
-                sendMessageRequest = onDepartmentChoosen(message, getONTABSCommand());
-                DEPARTMENT = message.getText();
-            } else if (message.getText().equals(getONTARCommand())) {
-                sendMessageRequest = onDepartmentChoosen(message, getONTARCommand());
-                DEPARTMENT = message.getText();
-            } else if (message.getText().equals(getONTIBIURCommand())) {
-                sendMessageRequest = onDepartmentChoosen(message, getONTIBIURCommand());
-                DEPARTMENT = message.getText();
-            } else if (message.getText().equals(getONTSABPCommand())) {
-                sendMessageRequest = onDepartmentChoosen(message, getONTSABPCommand());
-                DEPARTMENT = message.getText();
-            } else if (message.getText().equals(getONTFSIEKOCommand())) {
-                sendMessageRequest = onDepartmentChoosen(message, getONTFSIEKOCommand());
-                DEPARTMENT = message.getText();
-            } else if (message.getText().equals(getONTFSIEKOEFSCommand())) {
-                sendMessageRequest = onDepartmentChoosen(message, getONTFSIEKOEFSCommand());
-                DEPARTMENT = message.getText();
+            if (PIR.contains(message.getText())) {
+                sendMessageRequest = onPIRChoosen(message, message.getText());
+                PIRNAME = message.getText();
             } else {
                 sendMessageRequest = sendChooseOptionMessage(message.getChatId(), message.getMessageId(), getMainMenuKeyboard());
             }
@@ -151,15 +150,37 @@ public class BuroBot extends TelegramLongPollingBot {
             sendMessageRequest = sendChooseOptionMessage(message.getChatId(), message.getMessageId(), getMainMenuKeyboard());
         }
 
+
         return sendMessageRequest;
     }
 
-    private static SendMessage messageOnDepartmentMenu (Message message) {
+    private static SendMessage messageOnDepartmentMenu(Message message) {
+        SendMessage sendMessageRequest = null;
+        if (DEPARTMENTS.isEmpty())
+            sendMessageRequest = sendMessageOnError(message);
+        else {
+            if (message.hasText()) {
+                if (DEPARTMENTS.contains(message.getText())) {
+                    sendMessageRequest = onDepartmentChoosen(message);
+                    DEPARTMENT = message.getText();
+                } else if (message.getText().equals("Назад")) {
+                    sendMessageRequest = onCancelCommand(message.getFrom().getId(), message.getChatId(), message.getMessageId(), getMainMenuKeyboard());
+                } else {
+                    sendMessageRequest = sendChooseOptionMessage(message.getChatId(), message.getMessageId(), getMainMenuKeyboard());
+                }
+            } else {
+                sendMessageRequest = sendChooseOptionMessage(message.getChatId(), message.getMessageId(), getMainMenuKeyboard());
+            }
+        }
+        return sendMessageRequest;
+    }
+
+    private static SendMessage messageOnModuleMenu(Message message) {
         final int state = HSQLDBManager.getInstance().getState(message.getFrom().getId(), message.getChatId());
         SendMessage sendMessageRequest = null;
         switch (state) {
-            case DEPARTMENT_STATE:
-                sendMessageRequest = onDepartmentMenu(message);
+            case MODULE_STATE:
+                sendMessageRequest = onModuleMenu(message);
                 break;
             case NOTUPDATEDMODULE_STATE:
                 sendMessageRequest = onNotUpdatedModulesMenu(message);
@@ -168,7 +189,7 @@ public class BuroBot extends TelegramLongPollingBot {
 
         return sendMessageRequest;
     }
-    private static SendMessage onDepartmentMenu (Message message) {
+    private static SendMessage onModuleMenu(Message message) {
         SendMessage sendMessageRequest = null;
         if (message.hasText()) {
             if (MODULES.contains(message.getText())) {
@@ -176,7 +197,7 @@ public class BuroBot extends TelegramLongPollingBot {
             } else if (message.getText().equals("АС с неактуальной информацией")) {
                 sendMessageRequest = onNotUpdatedModulesChoosen (message.getFrom().getId(), message.getChatId(), message.getMessageId());
             } else if (message.getText().equals("Назад")) {
-                sendMessageRequest = onCancelCommand(message.getFrom().getId(), message.getChatId(), message.getMessageId(), getMainMenuKeyboard());
+                sendMessageRequest = onBackCommand(message.getFrom().getId(), message.getChatId(), message.getMessageId(), getRecentsKeyboardForDepartments(PIRNAME));
             }
         }
         return sendMessageRequest;
@@ -189,7 +210,7 @@ public class BuroBot extends TelegramLongPollingBot {
             if (MODULES.contains(message.getText())) {
                 sendMessageRequest = sendModuleStatusMessage (message.getFrom().getId(), message.getChatId(), message.getMessageId(), message.getText(), false);
             } else if (message.getText().equals("Назад")) {
-                sendMessageRequest = onBackCommand(message.getFrom().getId(), message.getChatId(), message.getMessageId(), getRecentsKeyboard(DEPARTMENT,true));
+                sendMessageRequest = onBackCommand(message.getFrom().getId(), message.getChatId(), message.getMessageId(), getRecentsKeyboardForModules(DEPARTMENT,true));
             }
         }
 
@@ -200,7 +221,7 @@ public class BuroBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.enableMarkdown(true);
 
-        ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboard(DEPARTMENT, updated);
+        ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboardForModules(DEPARTMENT, updated);
         sendMessage.setReplyMarkup(replyKeyboardMarkup);
         sendMessage.setChatId(chatId.toString());
         sendMessage.setReplyToMessageId(messageId);
@@ -208,7 +229,7 @@ public class BuroBot extends TelegramLongPollingBot {
         sendMessage.setText(getModuleStatus(DEPARTMENT, moduleName));
 
         if (updated)
-            HSQLDBManager.getInstance().insertState(userId, chatId, DEPARTMENT_STATE);
+            HSQLDBManager.getInstance().insertState(userId, chatId, MODULE_STATE);
         else
             HSQLDBManager.getInstance().insertState(userId, chatId, NOTUPDATEDMODULE_STATE);
         return sendMessage;
@@ -218,7 +239,7 @@ public class BuroBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.enableMarkdown(true);
 
-        ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboard(DEPARTMENT, false);
+        ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboardForModules(DEPARTMENT, false);
         if (replyKeyboardMarkup.getKeyboard().size() > 1) {
             sendMessage.setReplyMarkup(replyKeyboardMarkup);
             sendMessage.setChatId(chatId.toString());
@@ -228,31 +249,70 @@ public class BuroBot extends TelegramLongPollingBot {
             HSQLDBManager.getInstance().insertState(userId, chatId, NOTUPDATEDMODULE_STATE);
         }
         else {
-            replyKeyboardMarkup = getRecentsKeyboard(DEPARTMENT, true);
+            replyKeyboardMarkup = getRecentsKeyboardForModules(DEPARTMENT, true);
             sendMessage.setReplyMarkup(replyKeyboardMarkup);
             sendMessage.setChatId(chatId.toString());
             sendMessage.setReplyToMessageId(messageId);
             sendMessage.setText("В отделе " + DEPARTMENT + " нет АС с неактуальной информацией. Супер!");
-            HSQLDBManager.getInstance().insertState(userId, chatId, DEPARTMENT_STATE);
+            HSQLDBManager.getInstance().insertState(userId, chatId, MODULE_STATE);
         }
         return sendMessage;
     }
 
-    private static SendMessage onDepartmentChoosen (Message message, String departmentName) {
+    private static SendMessage onPIRChoosen (Message message, String pir) {
         SendMessage sendMessage = new SendMessage();
         sendMessage.enableMarkdown(true);
 
-        ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboard(departmentName, true);
+        ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboardForDepartments(pir);
         sendMessage.setReplyMarkup(replyKeyboardMarkup);
         sendMessage.setReplyToMessageId(message.getMessageId());
         sendMessage.setChatId(message.getChatId());
-        sendMessage.setText("Вы в отделе " + departmentName + ". Выберите нужную АС");
+        sendMessage.setText("Выберите отдел");
 
         HSQLDBManager.getInstance().insertState(message.getFrom().getId(), message.getChatId(), DEPARTMENT_STATE);
         return sendMessage;
     }
 
-    private static ReplyKeyboardMarkup getRecentsKeyboard(String departmentName, boolean updated) {
+    private static SendMessage onDepartmentChoosen (Message message) {
+        SendMessage sendMessage = new SendMessage();
+        sendMessage.enableMarkdown(true);
+
+        ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboardForModules(message.getText(), true);
+        sendMessage.setReplyMarkup(replyKeyboardMarkup);
+        sendMessage.setReplyToMessageId(message.getMessageId());
+        sendMessage.setChatId(message.getChatId());
+        sendMessage.setText("Вы в отделе " + message.getText() + ". Выберите нужную АС");
+
+        HSQLDBManager.getInstance().insertState(message.getFrom().getId(), message.getChatId(), MODULE_STATE);
+        return sendMessage;
+    }
+
+    private static ReplyKeyboardMarkup getRecentsKeyboardForDepartments(String pir) {
+        ReplyKeyboardMarkup replyKeyboardMarkup = new ReplyKeyboardMarkup();
+        replyKeyboardMarkup.setSelective(true);
+        replyKeyboardMarkup.setResizeKeyboard(true);
+        replyKeyboardMarkup.setOneTimeKeyboard(true);
+
+        getDepartments(pir);
+        Object[] objects = DEPARTMENTS.toArray();
+        List<KeyboardRow> keyboard = new ArrayList<>();
+
+        for (Object obj : objects) {
+            KeyboardRow row = new KeyboardRow();
+            row.add(obj.toString());
+            keyboard.add(row);
+        }
+
+        KeyboardRow row = new KeyboardRow();
+        row.add("Назад");
+        keyboard.add(row);
+
+        replyKeyboardMarkup.setKeyboard(keyboard);
+
+        return replyKeyboardMarkup;
+    }
+
+    private static ReplyKeyboardMarkup getRecentsKeyboardForModules(String departmentName, boolean updated) {
         ReplyKeyboardMarkup replyKeyboardMarkup = new ReplyKeyboardMarkup();
         replyKeyboardMarkup.setSelective(true);
         replyKeyboardMarkup.setResizeKeyboard(true);
@@ -283,11 +343,55 @@ public class BuroBot extends TelegramLongPollingBot {
         return replyKeyboardMarkup;
     }
 
-    private static ArrayList<String> getDepModules(String departmentName, boolean updated) {
-        if (!MODULES.isEmpty()) {
-            MODULES.clear();
+    private static void getPIR() {
+        if (!PIR.isEmpty())
+            PIR.clear();
+        if (new File(PATH).exists()) {
+            DocumentBuilder documentBuilder;
+            try {
+                documentBuilder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+                Document document = documentBuilder.parse(PATH);
+                NodeList pirList = document.getElementsByTagName("PIR");
+                for (int i = 0; i < pirList.getLength(); i++) {
+                    Node pir = pirList.item(i);
+                    PIR.add(pir.getAttributes().getNamedItem("name").getNodeValue().trim());
+                }
+            } catch (SAXException | ParserConfigurationException | IOException e) {
+                e.printStackTrace();
+            }
         }
-        ArrayList<String> result = new ArrayList<>();
+    }
+
+    private static void getDepartments(String pirName) {
+        if (!DEPARTMENTS.isEmpty())
+            DEPARTMENTS.clear();
+        if (new File(PATH).exists()) {
+            DocumentBuilder documentBuilder;
+            try {
+                documentBuilder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+                Document document = documentBuilder.parse(PATH);
+                NodeList pirList = document.getElementsByTagName("PIR");
+                for (int i = 0; i < pirList.getLength(); i++) {
+                    Node pir = pirList.item(i);
+                    if (pir.getAttributes().getNamedItem("name").getNodeValue().trim().equals(pirName)) {
+                        NodeList departments = pir.getChildNodes();
+                        for (int j = 0; j < departments.getLength(); j++) {
+                            Node department = departments.item(j);
+                            try {
+                                DEPARTMENTS.add(department.getAttributes().getNamedItem("name").getNodeValue());
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                }
+            } catch (SAXException | ParserConfigurationException | IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private static void getDepModules(String departmentName, boolean updated) {
+        if (!MODULES.isEmpty())
+            MODULES.clear();
         if (new File(PATH).exists()) {
             DocumentBuilder documentBuilder;
             try {
@@ -314,18 +418,15 @@ public class BuroBot extends TelegramLongPollingBot {
                             } catch (Exception ignored) {}
                         }
                     }
-
                 }
             } catch (ParserConfigurationException | IOException | SAXException e) {
                 e.printStackTrace();
             }
         }
-        return result;
     }
 
     private static String getModuleStatus(String departmentName, String moduleName) {
         String result = "";
-        String PIR;
         String updateDate = "";
         String change_time = "";
         String mnt_progress = "";
@@ -343,64 +444,70 @@ public class BuroBot extends TelegramLongPollingBot {
             try {
                 documentBuilder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
                 Document document = documentBuilder.parse(PATH);
-                Element root = document.getDocumentElement();
-                PIR = root.getAttribute("name");
-                NodeList departments = document.getElementsByTagName("Department");
-                for (int i = 0; i < departments.getLength(); i++) {
-                    Node department = departments.item(i);
-                    if (department.getAttributes().getNamedItem("name").getNodeValue().equals(departmentName)) {
-                        NodeList modules = department.getChildNodes();
-                        for(int j = 0; j < modules.getLength(); j++) {
-                            Node module = modules.item(j);
+                NodeList pirList = document.getElementsByTagName("PIR");
+                for (int index = 0; index < pirList.getLength(); index ++) {
+                    Node pir = pirList.item(index);
+                    if (pir.getAttributes().getNamedItem("name").getNodeValue().equals(PIRNAME)) {
+                        NodeList departments = pir.getChildNodes();
+                        for (int i = 0; i < departments.getLength(); i++) {
+                            Node department = departments.item(i);
                             try {
-                                if (module.getAttributes().getNamedItem("name").getNodeValue().equals(moduleName)) {
-                                    result = "<b>Информация по " + PIR + "</b>\n";
-                                    result = result + "АС: " + moduleName;
-                                    NodeList attributes = module.getChildNodes();
-                                    for (int ind = 0; ind < attributes.getLength(); ind ++) {
-                                        Node attribute = attributes.item(ind);
-                                        switch (attribute.getNodeName()) {
-                                            case "updateDate":
-                                                updateDate = attribute.getTextContent();
-                                                break;
-                                            case "change_time":
-                                                change_time = attribute.getTextContent();
-                                                break;
-                                            case "mnt_progress":
-                                                mnt_progress = attribute.getTextContent();
-                                                break;
-                                            case "mnt_stop":
-                                                mnt_stop = attribute.getTextContent();
-                                                break;
-                                            case "stand_progress":
-                                                stand_progress = attribute.getTextContent();
-                                                break;
-                                            case "stand_stop":
-                                                stand_stop = attribute.getTextContent();
-                                                break;
-                                            case "snt_progress":
-                                                snt_progress = attribute.getTextContent();
-                                                break;
-                                            case "snt_stop":
-                                                snt_stop = attribute.getTextContent();
-                                                break;
-                                            case "nt_progress":
-                                                nt_progress = attribute.getTextContent();
-                                                break;
-                                            case "nt_stop":
-                                                nt_stop = attribute.getTextContent();
-                                                break;
-                                            case "responsibles":
-                                                if (attribute.getChildNodes().getLength() > 0)
-                                                    for (int k = 0; k < attribute.getChildNodes().getLength(); k++)
-                                                        responsibles.add(attribute.getChildNodes().item(k).getTextContent());
-                                                break;
-                                            default:
-                                                break;
-                                        }
+                                if (department.getAttributes().getNamedItem("name").getNodeValue().equals(departmentName)) {
+                                    NodeList modules = department.getChildNodes();
+                                    for (int j = 0; j < modules.getLength(); j++) {
+                                        Node module = modules.item(j);
+                                        try {
+                                            if (module.getAttributes().getNamedItem("name").getNodeValue().equals(moduleName)) {
+                                                result = "<b>Информация по " + PIRNAME + "</b>\n";
+                                                result = result + "АС: " + moduleName;
+                                                NodeList attributes = module.getChildNodes();
+                                                for (int ind = 0; ind < attributes.getLength(); ind++) {
+                                                    Node attribute = attributes.item(ind);
+                                                    switch (attribute.getNodeName()) {
+                                                        case "updateDate":
+                                                            updateDate = attribute.getTextContent();
+                                                            break;
+                                                        case "change_time":
+                                                            change_time = attribute.getTextContent();
+                                                            break;
+                                                        case "mnt_progress":
+                                                            mnt_progress = attribute.getTextContent();
+                                                            break;
+                                                        case "mnt_stop":
+                                                            mnt_stop = attribute.getTextContent();
+                                                            break;
+                                                        case "stand_progress":
+                                                            stand_progress = attribute.getTextContent();
+                                                            break;
+                                                        case "stand_stop":
+                                                            stand_stop = attribute.getTextContent();
+                                                            break;
+                                                        case "snt_progress":
+                                                            snt_progress = attribute.getTextContent();
+                                                            break;
+                                                        case "snt_stop":
+                                                            snt_stop = attribute.getTextContent();
+                                                            break;
+                                                        case "nt_progress":
+                                                            nt_progress = attribute.getTextContent();
+                                                            break;
+                                                        case "nt_stop":
+                                                            nt_stop = attribute.getTextContent();
+                                                            break;
+                                                        case "responsibles":
+                                                            if (attribute.getChildNodes().getLength() > 0)
+                                                                for (int k = 0; k < attribute.getChildNodes().getLength(); k++)
+                                                                    responsibles.add(attribute.getChildNodes().item(k).getTextContent());
+                                                            break;
+                                                        default:
+                                                            break;
+                                                    }
+                                                }
+                                                result = result + statusMessage(updateDate, change_time, mnt_progress, mnt_stop, stand_progress,
+                                                        stand_stop, snt_progress, snt_stop, nt_progress, nt_stop, responsibles);
+                                            }
+                                        } catch (Exception ignored) {}
                                     }
-                                    result = result + statusMessage(updateDate, change_time, mnt_progress, mnt_stop, stand_progress,
-                                            stand_stop, snt_progress, snt_stop, nt_progress, nt_stop, responsibles);
                                 }
                             } catch (Exception ignored) {}
                         }
@@ -492,6 +599,12 @@ public class BuroBot extends TelegramLongPollingBot {
         return sendHelpMessage(message.getChatId(), message.getMessageId(), replyKeyboardMarkup);
     }
 
+    private static SendMessage sendMessageOnError(Message message) {
+        ReplyKeyboardMarkup replyKeyboardMarkup = getMainMenuKeyboard();
+        HSQLDBManager.getInstance().insertState(message.getFrom().getId(), message.getChatId(), MAINMENU);
+        return sendErrorMessage(message.getChatId(), message.getMessageId(), replyKeyboardMarkup);
+    }
+
     private static SendMessage sendHelpMessage(Long chatId, Integer messageId, ReplyKeyboardMarkup replyKeyboardMarkup) {
         SendMessage sendMessage = new SendMessage();
         sendMessage.enableMarkdown(true);
@@ -504,7 +617,20 @@ public class BuroBot extends TelegramLongPollingBot {
         return sendMessage;
     }
 
+    private static SendMessage sendErrorMessage(Long chatId, Integer messageId, ReplyKeyboardMarkup replyKeyboardMarkup) {
+        SendMessage sendMessage = new SendMessage();
+        sendMessage.enableMarkdown(true);
+        sendMessage.setChatId(chatId);
+        sendMessage.setReplyToMessageId(messageId);
+        if (replyKeyboardMarkup != null) {
+            sendMessage.setReplyMarkup(replyKeyboardMarkup);
+        }
+        sendMessage.setText("Что-то пошло не так. Возможно, бот немного устал и решил отдохнуть, но теперь он снова в деле!");
+        return sendMessage;
+    }
+
     private static SendMessage onBackCommand(Integer userId, Long chatId, Integer messageId, ReplyKeyboard replyKeyboard) {
+        final int state = HSQLDBManager.getInstance().getState(userId, chatId);
         SendMessage sendMessage = new SendMessage();
         sendMessage.setChatId(chatId.toString());
         sendMessage.enableMarkdown(true);
@@ -512,7 +638,7 @@ public class BuroBot extends TelegramLongPollingBot {
         sendMessage.setReplyMarkup(replyKeyboard);
         sendMessage.setText("Назад");
 
-        HSQLDBManager.getInstance().insertState(userId, chatId, DEPARTMENT_STATE);
+        HSQLDBManager.getInstance().insertState(userId, chatId, state - 1);
         return sendMessage;
     }
 
@@ -530,28 +656,23 @@ public class BuroBot extends TelegramLongPollingBot {
 
     private static String getHelpMessage() {
         return "Хочешь знать, как дела в ПИРе?" +
-                "\nВыбери нужный отдел и ты узнаешь намного больше!";
+                "\nВыбери нужный ПИР и ты узнаешь намного больше!";
     }
 
     private static ReplyKeyboardMarkup getMainMenuKeyboard() {
+        getPIR();
+
         ReplyKeyboardMarkup replyKeyboardMarkup = new ReplyKeyboardMarkup();
         replyKeyboardMarkup.setSelective(true);
         replyKeyboardMarkup.setResizeKeyboard(true);
         replyKeyboardMarkup.setOneTimeKeyboard(false);
 
         List<KeyboardRow> keyboard = new ArrayList<>();
-        KeyboardRow keyboardFirstRow = new KeyboardRow();
-        keyboardFirstRow.add(getONTABSCommand());
-        keyboardFirstRow.add(getONTARCommand());
-        KeyboardRow keyboardSecondRow = new KeyboardRow();
-        keyboardSecondRow.add(getONTIBIURCommand());
-        keyboardSecondRow.add(getONTSABPCommand());
-        KeyboardRow keyboardThirdRow = new KeyboardRow();
-        keyboardThirdRow.add(getONTFSIEKOCommand());
-        keyboardThirdRow.add(getONTFSIEKOEFSCommand());
-        keyboard.add(keyboardFirstRow);
-        keyboard.add(keyboardSecondRow);
-        keyboard.add(keyboardThirdRow);
+        for (Object pir : PIR) {
+            KeyboardRow row = new KeyboardRow();
+            row.add(pir.toString());
+            keyboard.add(row);
+        }
         replyKeyboardMarkup.setKeyboard(keyboard);
 
         return replyKeyboardMarkup;
@@ -566,24 +687,5 @@ public class BuroBot extends TelegramLongPollingBot {
         sendMessage.setText("Пожалуйста, выберите опцию из меню");
 
         return sendMessage;
-    }
-
-    private static String getONTABSCommand() {
-        return "ОНТАБС";
-    }
-    private static String getONTIBIURCommand() {
-        return "ОНТИБИУР";
-    }
-    private static String getONTFSIEKOCommand() {
-        return "ОНТФСИЭКО";
-    }
-    private static String getONTSABPCommand() {
-        return "ОНТСАБП";
-    }
-    private static String getONTFSIEKOEFSCommand() {
-        return "ОНТФСИЭКО ЕФС";
-    }
-    private static String getONTARCommand() {
-        return "ОНТАР";
     }
 }
