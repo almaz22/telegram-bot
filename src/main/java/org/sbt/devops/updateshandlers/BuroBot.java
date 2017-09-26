@@ -7,6 +7,7 @@ import org.sbt.devops.database.HSQLDBManager;
 import org.sbt.devops.service.Emoji;
 import org.telegram.telegrambots.api.methods.send.SendMessage;
 import org.telegram.telegrambots.api.objects.Message;
+import org.telegram.telegrambots.api.objects.ResponseParameters;
 import org.telegram.telegrambots.api.objects.Update;
 import org.telegram.telegrambots.api.objects.replykeyboard.ReplyKeyboard;
 import org.telegram.telegrambots.api.objects.replykeyboard.ReplyKeyboardMarkup;
@@ -16,7 +17,6 @@ import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.exceptions.TelegramApiException;
 import org.telegram.telegrambots.logging.BotLogger;
 import org.w3c.dom.Document;
-import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
@@ -43,14 +43,16 @@ public class BuroBot extends TelegramLongPollingBot {
     private static final int MAINMENU = 1;
     private static final int DEPARTMENT_STATE = 2;
     private static final int MODULE_STATE = 3;
-    private static final int NOTUPDATEDMODULE_STATE = 4;
+    private static final int NOT_UPDATED_MODULE_STATE = 4;
+    private static final int NOTIFICATION_STATE = 5;
+    private static final int AFTER_NOTIFICATION_STATE = 6;
 
     private static String DEPARTMENT;
     private static String PIRNAME;
 
-    private static HashSet MODULES = new HashSet();
-    private static HashSet PIR = new HashSet();
-    private static HashSet DEPARTMENTS = new HashSet();
+    private static HashSet<String > MODULES = new HashSet<>();
+    private static HashSet<String> PIR = new HashSet<>();
+    private static HashSet<String> DEPARTMENTS = new HashSet<>();
 
     private static boolean err = false;
 
@@ -59,7 +61,7 @@ public class BuroBot extends TelegramLongPollingBot {
         try {
             if (update.hasMessage()) {
                 Message message = update.getMessage();
-                if (message.hasText() || message.hasLocation()) {
+                if (message.hasText()) {
                     handleIncomingMessage(message);
                 }
             }
@@ -81,35 +83,52 @@ public class BuroBot extends TelegramLongPollingBot {
     }
 
     private void handleIncomingMessage(Message message) throws TelegramApiException {
-        final int state = HSQLDBManager.getInstance().getState(message.getFrom().getId(), message.getChatId());
-        if (!message.isUserMessage() && message.hasText()) {
-            if (isCommandForOther(message.getText())) {
-                return;
-            } else if (message.getText().startsWith(Commands.STOPCOMMAND)){
-                sendHideKeyboard(message.getFrom().getId(), message.getChatId(), message.getMessageId());
-                return;
+        HashSet<Integer> users = BuildVars.getUSERS();
+        if (users.contains(message.getFrom().getId())) {
+            final int state = HSQLDBManager.getInstance().getState(message.getFrom().getId(), message.getChatId());
+            if (!message.isUserMessage() && message.hasText()) {
+                if (isCommandForOther(message.getText())) {
+                    return;
+                } else if (message.getText().startsWith(Commands.STOPCOMMAND)) {
+                    sendHideKeyboard(message.getFrom().getId(), message.getChatId(), message.getMessageId());
+                    return;
+                }
             }
+            SendMessage sendMessageRequest;
+            switch (state) {
+                case MAINMENU:
+                    sendMessageRequest = messageOnMainMenu(message);
+                    break;
+                case DEPARTMENT_STATE:
+                    sendMessageRequest = messageOnDepartmentMenu(message);
+                    break;
+                case MODULE_STATE:
+                case NOT_UPDATED_MODULE_STATE:
+                    sendMessageRequest = messageOnModuleMenu(message);
+                    break;
+                case NOTIFICATION_STATE:
+                    sendMessageRequest = messageOnNotificationMenu(message);
+                    break;
+                case AFTER_NOTIFICATION_STATE:
+                    try {
+                        sendMessage(sendNotification());
+                        sendMessageRequest = messageOnAfterNotificationMenu(message,true);
+                    } catch (Exception e) {
+                        sendMessageRequest = messageOnAfterNotificationMenu(message, false);
+                        BotLogger.error(LOGTAG, e.getMessage());
+                    }
+                    break;
+                default:
+                    sendMessageRequest = sendMessageDefault(message);
+                    break;
+            }
+            if (sendMessageRequest == null) {
+                sendMessageRequest = sendMessageOnError(message);
+            }
+            sendMessage(sendMessageRequest);
         }
-        SendMessage sendMessageRequest;
-        switch (state) {
-            case MAINMENU:
-                sendMessageRequest = messageOnMainMenu(message);
-                break;
-            case DEPARTMENT_STATE:
-                sendMessageRequest = messageOnDepartmentMenu(message);
-                break;
-            case MODULE_STATE:
-            case NOTUPDATEDMODULE_STATE:
-                sendMessageRequest = messageOnModuleMenu(message);
-                break;
-            default:
-                sendMessageRequest = sendMessageDefault(message);
-                break;
-        }
-        if (sendMessageRequest == null) {
-            sendMessageRequest = sendMessageOnError(message);
-        }
-        sendMessage(sendMessageRequest);
+        else
+            sendMessage(sendMessageNoRights(message));
     }
 
     private void sendHideKeyboard(Integer userId, Long chatId, Integer messageId) throws TelegramApiException {
@@ -135,7 +154,7 @@ public class BuroBot extends TelegramLongPollingBot {
     }
 
     private static SendMessage messageOnMainMenu(Message message) {
-        SendMessage sendMessageRequest = null;
+        SendMessage sendMessageRequest;
         if (PIR.isEmpty()) {
             getPIR();
         }
@@ -149,13 +168,11 @@ public class BuroBot extends TelegramLongPollingBot {
         } else {
             sendMessageRequest = sendChooseOptionMessage(message.getChatId(), message.getMessageId(), getMainMenuKeyboard());
         }
-
-
         return sendMessageRequest;
     }
 
     private static SendMessage messageOnDepartmentMenu(Message message) {
-        SendMessage sendMessageRequest = null;
+        SendMessage sendMessageRequest;
         if (DEPARTMENTS.isEmpty())
             sendMessageRequest = sendMessageOnError(message);
         else {
@@ -182,7 +199,7 @@ public class BuroBot extends TelegramLongPollingBot {
             case MODULE_STATE:
                 sendMessageRequest = onModuleMenu(message);
                 break;
-            case NOTUPDATEDMODULE_STATE:
+            case NOT_UPDATED_MODULE_STATE:
                 sendMessageRequest = onNotUpdatedModulesMenu(message);
                 break;
         }
@@ -211,6 +228,8 @@ public class BuroBot extends TelegramLongPollingBot {
                 sendMessageRequest = sendModuleStatusMessage (message.getFrom().getId(), message.getChatId(), message.getMessageId(), message.getText(), false);
             } else if (message.getText().equals("Назад")) {
                 sendMessageRequest = onBackCommand(message.getFrom().getId(), message.getChatId(), message.getMessageId(), getRecentsKeyboardForModules(DEPARTMENT,true));
+            } else if (message.getText().equals("Отправить уведомление начальнику отдела?")) {
+                sendMessageRequest = sendNotificationMenu(message.getFrom().getId(), message.getChatId(), message.getMessageId());
             }
         }
 
@@ -222,16 +241,25 @@ public class BuroBot extends TelegramLongPollingBot {
         sendMessage.enableMarkdown(true);
 
         ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboardForModules(DEPARTMENT, updated);
+
+        if (!updated) {
+            List<KeyboardRow> keyboard = replyKeyboardMarkup.getKeyboard();
+            KeyboardRow row = new KeyboardRow();
+            row.add("Отправить уведомление начальнику отдела?");
+            keyboard.add(row);
+            replyKeyboardMarkup.setKeyboard(keyboard);
+        }
+
         sendMessage.setReplyMarkup(replyKeyboardMarkup);
         sendMessage.setChatId(chatId.toString());
-        //sendMessage.setReplyToMessageId(messageId);
+        sendMessage.setReplyToMessageId(messageId);
         sendMessage.setParseMode("HTML");
         sendMessage.setText(getModuleStatus(DEPARTMENT, moduleName));
 
         if (updated)
             HSQLDBManager.getInstance().insertState(userId, chatId, MODULE_STATE);
         else
-            HSQLDBManager.getInstance().insertState(userId, chatId, NOTUPDATEDMODULE_STATE);
+            HSQLDBManager.getInstance().insertState(userId, chatId, NOT_UPDATED_MODULE_STATE);
         return sendMessage;
     }
 
@@ -241,18 +269,25 @@ public class BuroBot extends TelegramLongPollingBot {
 
         ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboardForModules(DEPARTMENT, false);
         if (replyKeyboardMarkup.getKeyboard().size() > 1) {
+
+            List<KeyboardRow> keyboard = replyKeyboardMarkup.getKeyboard();
+            KeyboardRow row = new KeyboardRow();
+            row.add("Отправить уведомление начальнику отдела?");
+            keyboard.add(row);
+            replyKeyboardMarkup.setKeyboard(keyboard);
+
             sendMessage.setReplyMarkup(replyKeyboardMarkup);
             sendMessage.setChatId(chatId.toString());
-            //sendMessage.setReplyToMessageId(messageId);
+            sendMessage.setReplyToMessageId(messageId);
             //sendMessage.setParseMode("HTML");
             sendMessage.setText("Список АС с неактуальной информацией");
-            HSQLDBManager.getInstance().insertState(userId, chatId, NOTUPDATEDMODULE_STATE);
+            HSQLDBManager.getInstance().insertState(userId, chatId, NOT_UPDATED_MODULE_STATE);
         }
         else {
             replyKeyboardMarkup = getRecentsKeyboardForModules(DEPARTMENT, true);
             sendMessage.setReplyMarkup(replyKeyboardMarkup);
             sendMessage.setChatId(chatId.toString());
-            //sendMessage.setReplyToMessageId(messageId);
+            sendMessage.setReplyToMessageId(messageId);
             sendMessage.setText("В отделе " + DEPARTMENT + " нет АС с неактуальной информацией. Супер!");
             HSQLDBManager.getInstance().insertState(userId, chatId, MODULE_STATE);
         }
@@ -265,7 +300,7 @@ public class BuroBot extends TelegramLongPollingBot {
 
         ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboardForDepartments(pir);
         sendMessage.setReplyMarkup(replyKeyboardMarkup);
-        //sendMessage.setReplyToMessageId(message.getMessageId());
+        sendMessage.setReplyToMessageId(message.getMessageId());
         sendMessage.setChatId(message.getChatId());
         sendMessage.setText("Выберите отдел");
 
@@ -279,7 +314,7 @@ public class BuroBot extends TelegramLongPollingBot {
 
         ReplyKeyboardMarkup replyKeyboardMarkup = getRecentsKeyboardForModules(message.getText(), true);
         sendMessage.setReplyMarkup(replyKeyboardMarkup);
-        //sendMessage.setReplyToMessageId(message.getMessageId());
+        sendMessage.setReplyToMessageId(message.getMessageId());
         sendMessage.setChatId(message.getChatId());
         sendMessage.setText("Вы в отделе " + message.getText() + ". Выберите нужную АС");
 
@@ -420,8 +455,7 @@ public class BuroBot extends TelegramLongPollingBot {
                                                     MODULES.add(moduleName);
                                                 }
                                             }
-                                        } catch (Exception ignored) {
-                                        }
+                                        } catch (Exception ignored) {}
                                     }
                                 }
                             } catch (Exception ignored) {}
@@ -618,7 +652,7 @@ public class BuroBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.enableMarkdown(true);
         sendMessage.setChatId(chatId);
-        //sendMessage.setReplyToMessageId(messageId);
+        sendMessage.setReplyToMessageId(messageId);
         if (replyKeyboardMarkup != null) {
             sendMessage.setReplyMarkup(replyKeyboardMarkup);
         }
@@ -630,7 +664,7 @@ public class BuroBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.enableMarkdown(true);
         sendMessage.setChatId(chatId);
-        //sendMessage.setReplyToMessageId(messageId);
+        sendMessage.setReplyToMessageId(messageId);
         if (replyKeyboardMarkup != null) {
             sendMessage.setReplyMarkup(replyKeyboardMarkup);
         }
@@ -643,7 +677,7 @@ public class BuroBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.setChatId(chatId.toString());
         sendMessage.enableMarkdown(true);
-        //sendMessage.setReplyToMessageId(messageId);
+        sendMessage.setReplyToMessageId(messageId);
         sendMessage.setReplyMarkup(replyKeyboard);
         sendMessage.setText("Назад");
 
@@ -655,7 +689,7 @@ public class BuroBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.setChatId(chatId.toString());
         sendMessage.enableMarkdown(true);
-        //sendMessage.setReplyToMessageId(messageId);
+        sendMessage.setReplyToMessageId(messageId);
         sendMessage.setReplyMarkup(replyKeyboard);
         sendMessage.setText("Возврат в главное меню");
 
@@ -691,9 +725,173 @@ public class BuroBot extends TelegramLongPollingBot {
         SendMessage sendMessage = new SendMessage();
         sendMessage.enableMarkdown(true);
         sendMessage.setChatId(chatId.toString());
-        //sendMessage.setReplyToMessageId(messageId);
+        sendMessage.setReplyToMessageId(messageId);
         sendMessage.setReplyMarkup(replyKeyboard);
         sendMessage.setText("Пожалуйста, выберите опцию из меню");
+
+        return sendMessage;
+    }
+
+    private static SendMessage sendNotificationMenu (Integer userId, Long chatId, Integer messageId) {
+        SendMessage sendMessage = new SendMessage();
+        sendMessage.enableMarkdown(true);
+
+        ReplyKeyboardMarkup replyKeyboardMarkup = new ReplyKeyboardMarkup();
+        List<KeyboardRow> keyboard = replyKeyboardMarkup.getKeyboard();
+        KeyboardRow row = new KeyboardRow();
+        row.add("Да");
+        row.add("Нет");
+        keyboard.add(row);
+        replyKeyboardMarkup.setKeyboard(keyboard);
+        replyKeyboardMarkup.setResizeKeyboard(true);
+
+        sendMessage.setReplyMarkup(replyKeyboardMarkup);
+        sendMessage.setChatId(chatId.toString());
+        sendMessage.setReplyToMessageId(messageId);
+        sendMessage.setText("Отправляем уведомление на почту и в Telegram о статусах АС?");
+
+        HSQLDBManager.getInstance().insertState(userId, chatId, NOTIFICATION_STATE);
+
+        return sendMessage;
+    }
+
+    private static SendMessage messageOnNotificationMenu (Message message) {
+        SendMessage sendMessageRequest = null;
+
+        if (message.hasText()) {
+            if (message.getText().equals("Да")) {
+
+                ReplyKeyboardMarkup replyKeyboardMarkup = new ReplyKeyboardMarkup();
+                List<KeyboardRow> keyboard = replyKeyboardMarkup.getKeyboard();
+                KeyboardRow row = new KeyboardRow();
+                row.add("OK");
+                keyboard.add(row);
+                replyKeyboardMarkup.setKeyboard(keyboard);
+                replyKeyboardMarkup.setResizeKeyboard(true);
+
+                SendMessage sendMessage = new SendMessage();
+                sendMessage.setChatId(message.getChatId().toString());
+                sendMessage.setReplyToMessageId(message.getMessageId());
+                sendMessage.setReplyMarkup(replyKeyboardMarkup);
+                sendMessage.setText("Отправляем уведомление ...");
+
+                HSQLDBManager.getInstance().insertState(message.getFrom().getId(), message.getChatId(), AFTER_NOTIFICATION_STATE);
+                sendMessageRequest = sendMessage;
+
+            } else if (message.getText().equals("Нет")) {
+
+                SendMessage sendMessage = new SendMessage();
+                sendMessage.setChatId(message.getChatId().toString());
+                sendMessage.enableMarkdown(true);
+                sendMessage.setReplyToMessageId(message.getMessageId());
+                sendMessage.setReplyMarkup(getRecentsKeyboardForModules(DEPARTMENT,true));
+                sendMessage.setText("Назад");
+
+                HSQLDBManager.getInstance().insertState(message.getFrom().getId(), message.getChatId(), MODULE_STATE);
+                sendMessageRequest = sendMessage;
+            }
+        } else {
+            sendMessageRequest = sendChooseOptionMessage(message.getChatId(), message.getMessageId(), getMainMenuKeyboard());
+        }
+        return sendMessageRequest;
+    }
+
+    private static SendMessage messageOnAfterNotificationMenu (Message message, boolean messageSent) {
+        SendMessage sendMessageRequest;
+
+        SendMessage sendMessage = new SendMessage();
+        sendMessage.enableNotification();
+        sendMessage.setChatId(message.getChatId().toString());
+        sendMessage.enableMarkdown(true);
+        sendMessage.setReplyToMessageId(message.getMessageId());
+        sendMessage.setReplyMarkup(getRecentsKeyboardForModules(DEPARTMENT,true));
+        if (messageSent)
+            sendMessage.setText("Отправлено");
+        else
+            sendMessage.setText("Сообщение не отправлено. \n" +
+                    "Адресат должен начать беседу с ботом, после этого он будет получать уведомления");
+
+        HSQLDBManager.getInstance().insertState(message.getFrom().getId(), message.getChatId(), MODULE_STATE);
+        sendMessageRequest = sendMessage;
+
+        return sendMessageRequest;
+    }
+
+    private static SendMessage sendNotification () {
+        SendMessage sendMessage = new SendMessage();
+        sendMessage.enableNotification();
+        sendMessage.enableMarkdown(true);
+        sendMessage.setChatId(getDirectorInfo());
+        sendMessage.setText(getAllModules());
+
+        return sendMessage;
+    }
+
+    private static String getAllModules() {
+        StringBuilder result = new StringBuilder("Доброго времени суток! Довожу до сведения, что в следующих АС имеется неактулизированная информация:\n");
+        getDepModules(PIRNAME, DEPARTMENT,false);
+        for (Object module : MODULES) {
+            //result = result + getModuleStatus(DEPARTMENT, module.toString());
+            result.append("*").append(module.toString()).append("*");
+            result.append("\n");
+        }
+        result.append("За подробной информацией обращайтесь ко мне!");
+        return result.toString();
+    }
+
+    private static String getDirectorInfo() {
+        String telegram_id = "";
+
+        if (new File(PATH).exists()) {
+            DocumentBuilder documentBuilder;
+            try {
+                documentBuilder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+                Document document = documentBuilder.parse(PATH);
+                NodeList pirList = document.getElementsByTagName("PIR");
+                for (int index = 0; index < pirList.getLength(); index ++) {
+                    Node pir = pirList.item(index);
+                    if (pir.getAttributes().getNamedItem("name").getNodeValue().equals(PIRNAME)) {
+                        NodeList departments = pir.getChildNodes();
+                        for (int i = 0; i < departments.getLength(); i++) {
+                            Node department = departments.item(i);
+                            try {
+                                if (department.getAttributes().getNamedItem("name").getNodeValue().equals(DEPARTMENT)) {
+                                    NodeList modules = department.getChildNodes();
+                                    for (int j = 0; j < modules.getLength(); j++) {
+                                        Node node = modules.item(j);
+                                        try {
+                                            if (node.getNodeName().equals("Director")) {
+                                                NodeList directorInfo = node.getChildNodes();
+                                                for (int k = 0; k < directorInfo.getLength(); k++) {
+                                                    switch (directorInfo.item(k).getNodeName()) {
+                                                        case ("telegram_id"):
+                                                            telegram_id = directorInfo.item(k).getTextContent();
+                                                            break;
+                                                        default:
+                                                            break;
+                                                    }
+                                                }
+                                            }
+                                        } catch (Exception ignored) {}
+                                    }
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                }
+            } catch (ParserConfigurationException | IOException | SAXException e) {
+                e.printStackTrace();
+            }
+        }
+        return telegram_id;
+    }
+
+    private static SendMessage sendMessageNoRights (Message message) {
+        SendMessage sendMessage = new SendMessage();
+        sendMessage.enableNotification();
+        sendMessage.enableMarkdown(true);
+        sendMessage.setChatId(message.getChatId().toString());
+        sendMessage.setText("У вас нет прав для пользования ботом");
 
         return sendMessage;
     }
